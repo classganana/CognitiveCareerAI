@@ -47,39 +47,30 @@ jobs:
 
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          APP_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: APP_IMAGE,MONGODB_URI,GHCR_READ_TOKEN
           script_stop: true
           script: |
             set -euo pipefail
 
-            APP_DIR="/opt/career-case-management"
-            APP_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+            echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin
 
-            mkdir -p "$APP_DIR"
-
-            cat > "$APP_DIR/docker-compose.prod.yml" <<'COMPOSE_EOF'
-            services:
-              app:
-                image: ${APP_IMAGE}
-                container_name: career-case-app
-                restart: unless-stopped
-                ports:
-                  - "3000:3000"
-                environment:
-                  MONGODB_URI: ${MONGODB_URI}
-                  NODE_ENV: production
-            COMPOSE_EOF
-
-            echo "${{ secrets.GHCR_READ_TOKEN }}" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin
-
-            export APP_IMAGE="$APP_IMAGE"
-            export MONGODB_URI="${{ secrets.MONGODB_URI }}"
-
-            docker compose -f "$APP_DIR/docker-compose.prod.yml" pull
-            docker compose -f "$APP_DIR/docker-compose.prod.yml" up -d --remove-orphans
+            docker pull "$APP_IMAGE"
+            docker stop career-case-app 2>/dev/null || true
+            docker rm career-case-app 2>/dev/null || true
+            docker run -d \
+              --name career-case-app \
+              --restart unless-stopped \
+              -p 3000:3000 \
+              -e "MONGODB_URI=${MONGODB_URI}" \
+              -e NODE_ENV=production \
+              "$APP_IMAGE"
             docker image prune -f
-
-            docker compose -f "$APP_DIR/docker-compose.prod.yml" ps
+            docker ps --filter name=career-case-app
